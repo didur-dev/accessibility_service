@@ -2,23 +2,39 @@ package dev.didur.accessibility_service
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
 import android.util.Log
+import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import com.google.gson.Gson
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.TextRecognizer
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import io.flutter.embedding.android.FlutterView
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import android.os.Handler
+import android.os.Looper
+import com.google.mlkit.vision.text.Text
 
 
 class AccessibilityServiceListener : AccessibilityService() {
     private val executor: ExecutorService = Executors.newFixedThreadPool(4)
 
     // var callback: ((AccessibilityEvent?, AnalyzedResult) -> Unit)? = null
+
+    private val handler = Handler(Looper.getMainLooper())
+
+    private var lastText: String = ""
 
     companion object {
         // Exported Accessibility Service Instance
@@ -47,11 +63,16 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+
+        handler.post(runnable)
+
         instance = this
     }
 
     override fun onDestroy() {
         super.onDestroy()
+
+        handler.removeCallbacks(runnable)
 
         instance = null
         executor.shutdown()
@@ -62,6 +83,26 @@ class AccessibilityServiceListener : AccessibilityService() {
         Log.d(Constants.LOG_TAG, "onInterrupt")
     }
 
+    private val runnable = object : Runnable {
+        override fun run() {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                extractTextFromImage() { extractedText ->
+                    if(lastText != extractedText){
+                        val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
+                        intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = extractedText)))
+                        sendBroadcast(intent)
+                        lastText = extractedText
+                    }
+                }
+            }
+
+            // Agenda a próxima execução após 2 segundos (2000 milissegundos)
+            handler.postDelayed(this, 2000)
+        }
+    }
+
+
+
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.let {
             val className = it.className.nullableString()
@@ -71,20 +112,37 @@ class AccessibilityServiceListener : AccessibilityService() {
             val description = it.contentDescription.nullableString()
             val source = event.source
 
-            if (className.isNotBlank() && packageName.isNotBlank()) {
-                executor.execute {
-                    // Thread.sleep(100)
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+//                extractTextFromImage() { extractedText ->
+//                    val eventMap = mapOf(
+//                        "event" to AnalyzedResult(text = extractedText, event = eventWrapper),
+//                        "type" to "text"
+//                    )
+//                    val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
+//                    intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(eventMap))
+//                    sendBroadcast(intent)
+//                }
+//            }
+
+            executor.execute {
+                // Thread.sleep(100)
 //                    val start = System.currentTimeMillis()
+                var eventWarper: EventWrapper? = null;
 
-                    val result = analyze(source, EventWrapper(packageName, className, mapEventType(eventType)))
+                if (className.isNotBlank() && packageName.isNotBlank()) {
+                    eventWarper = EventWrapper(packageName, className, mapEventType(eventType))
+                }
 
-                    val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                    intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
-                    sendBroadcast(intent)
+                val result = analyze(source, eventWarper)
+
+                val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
+                sendBroadcast(intent)
 
 //                    Log.d(Constants.LOG_TAG, "analyze tree cost ${System.currentTimeMillis() - start}ms")
-                }
             }
+
+
         }
     }
 
@@ -119,8 +177,6 @@ class AccessibilityServiceListener : AccessibilityService() {
     }
 
 
-
-
     fun analyze(source: AccessibilityNodeInfo?, event: EventWrapper? = null): AnalyzedResult {
         val result = AnalyzedResult(event = event)
         analyzeTree(source, result)
@@ -147,6 +203,105 @@ class AccessibilityServiceListener : AccessibilityService() {
                 analyzeTree(node.getChild(i), list, trace + i)
             }
         }
+    }
+
+    @RequiresApi(Build.VERSION_CODES.R)
+    fun extractTextFromImage(onTextExtracted: (String) -> Unit) {
+        val executor: Executor = Executors.newSingleThreadExecutor()
+
+        // Callback que recebe o bitmap da screenshot
+        val screenshotCallback = object : AccessibilityService.TakeScreenshotCallback {
+            override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                // Obter o bitmap da screenshot
+                val bitmap: Bitmap? = screenshot.hardwareBuffer?.let {
+                    Bitmap.wrapHardwareBuffer(it, screenshot.colorSpace)
+                }
+
+                // Processar o bitmap e retornar o texto extraído
+                bitmap?.let {
+                    processBitmap(it) { extractedText ->
+                        onTextExtracted(extractedText)
+                    }
+                } ?: run {
+                    Log.d("BITMAP_ERROR", "Falha ao capturar o bitmap")
+                    onTextExtracted("Erro ao capturar o bitmap")
+                }
+            }
+
+            override fun onFailure(errorCode: Int) {
+                Log.d("SCREENSHOT_FAILED", "Falha ao tirar screenshot. Código de erro: $errorCode")
+                onTextExtracted("Erro ao tirar screenshot. Código de erro: $errorCode")
+            }
+        }
+
+        // Tirar a screenshot
+        takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
+    }
+
+
+    private fun saveBitmapToCache(bitmap: Bitmap): String? {
+        return try {
+            // Diretório temporário do cache
+            val cacheDir = cacheDir  // Ou use externalCacheDir para o cache externo
+
+            // Crie o arquivo no cache
+            val fileName = "screenshot_${System.currentTimeMillis()}.jpg"
+            val file = File(cacheDir, fileName)
+
+            val outputStream = FileOutputStream(file)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)
+            outputStream.flush()
+            outputStream.close()
+
+            Log.i("AccessibilityPlugin", "Screenshot salva no cache: ${file.absolutePath}")
+            file.absolutePath  // Retorna o caminho completo do arquivo
+        } catch (e: Exception) {
+            Log.i("AccessibilityPlugin", "Erro ao salvar a screenshot: ${e.message}")
+            null
+        }
+    }
+
+    private fun processBitmap(bitmap: Bitmap, onComplete: (String) -> Unit) {
+        // Crie um InputImage a partir do bitmap
+        val image = InputImage.fromBitmap(bitmap, 0)
+
+        // Obtenha uma instância do TextRecognizer
+        val recognizer: TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+        // Processa a imagem
+        recognizer.process(image)
+            .addOnSuccessListener { visionText ->
+                // Retorna o texto completo extraído
+
+                onComplete(processTextRecognitionResult(visionText))
+//                onComplete(visionText.text)
+
+
+            }
+            .addOnFailureListener { e ->
+                // Em caso de falha, retorna uma mensagem de erro
+                onComplete("Erro ao reconhecer texto: ${e.message}")
+            }
+    }
+
+    private fun processTextRecognitionResult(result: Text): String {
+        // Lista de blocos de texto
+        val textBlocks = result.textBlocks
+
+        // Ordena os blocos de texto com base na posição vertical (topo da boundingBox)
+        val sortedBlocks = textBlocks.sortedWith(compareBy { it.boundingBox?.top ?: 0 })
+
+        val extractedText = StringBuilder()
+
+        // Itera sobre os blocos ordenados e adiciona o texto ao StringBuilder
+        for (block in sortedBlocks) {
+            for (line in block.lines) {
+                extractedText.append(line.text)
+                extractedText.append("\n")  // Adiciona uma nova linha após cada linha de texto
+            }
+        }
+
+        return extractedText.toString()
     }
 }
 

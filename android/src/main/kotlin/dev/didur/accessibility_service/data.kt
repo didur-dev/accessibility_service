@@ -44,10 +44,12 @@ data class NodeData(
 }
 
 data class AnalyzedResult(
+    val text: String? = null,
     val event: EventWrapper? = null,
     val nodes: SortedMap<String, NodeData> = sortedMapOf(),
 ) {
     fun toMap() = mapOf(
+        "text" to text,
         "event" to mapOf(
             "type" to event?.type,
             "packageName" to event?.packageName.nullableString(),

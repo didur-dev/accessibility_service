@@ -72,4 +72,5 @@ android {
 
 dependencies {
     implementation 'androidx.emoji2:emoji2:1.4.0'
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
 }
