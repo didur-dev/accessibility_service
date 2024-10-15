@@ -24,17 +24,20 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import android.os.Handler
 import android.os.Looper
+import android.util.Base64
 import com.google.mlkit.vision.text.Text
+import java.io.ByteArrayOutputStream
 
 
 class AccessibilityServiceListener : AccessibilityService() {
     private val executor: ExecutorService = Executors.newFixedThreadPool(4)
 
-    // var callback: ((AccessibilityEvent?, AnalyzedResult) -> Unit)? = null
-
+    private var lastScreenshotTime: Long = 0
+    private val debounceTime: Long = 2000 // 2 segundos de debounce
+    private var lastBitmap: Bitmap? = null // Armazena o último bitmap capturado
     private val handler = Handler(Looper.getMainLooper())
-
-    private var lastText: String = ""
+    private var runnable: Runnable? = null
+    private val differenceThreshold = 5.0 // Limite de 5% de diferença
 
     companion object {
         // Exported Accessibility Service Instance
@@ -64,16 +67,11 @@ class AccessibilityServiceListener : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
 
-        handler.post(runnable)
-
         instance = this
     }
 
     override fun onDestroy() {
         super.onDestroy()
-
-        handler.removeCallbacks(runnable)
-
         instance = null
         executor.shutdown()
         Log.d(Constants.LOG_TAG, "onDestroy")
@@ -82,26 +80,6 @@ class AccessibilityServiceListener : AccessibilityService() {
     override fun onInterrupt() {
         Log.d(Constants.LOG_TAG, "onInterrupt")
     }
-
-    private val runnable = object : Runnable {
-        override fun run() {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                extractTextFromImage() { extractedText ->
-                    if(lastText != extractedText){
-                        val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                        intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = extractedText)))
-                        sendBroadcast(intent)
-                        lastText = extractedText
-                    }
-                }
-            }
-
-            // Agenda a próxima execução após 2 segundos (2000 milissegundos)
-            handler.postDelayed(this, 2000)
-        }
-    }
-
-
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.let {
@@ -112,21 +90,11 @@ class AccessibilityServiceListener : AccessibilityService() {
             val description = it.contentDescription.nullableString()
             val source = event.source
 
-//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-//                extractTextFromImage() { extractedText ->
-//                    val eventMap = mapOf(
-//                        "event" to AnalyzedResult(text = extractedText, event = eventWrapper),
-//                        "type" to "text"
-//                    )
-//                    val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
-//                    intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(eventMap))
-//                    sendBroadcast(intent)
-//                }
-//            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                getScreenshot()
+            }
 
             executor.execute {
-                // Thread.sleep(100)
-//                    val start = System.currentTimeMillis()
                 var eventWarper: EventWrapper? = null;
 
                 if (className.isNotBlank() && packageName.isNotBlank()) {
@@ -138,15 +106,11 @@ class AccessibilityServiceListener : AccessibilityService() {
                 val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
                 intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
                 sendBroadcast(intent)
-
-//                    Log.d(Constants.LOG_TAG, "analyze tree cost ${System.currentTimeMillis() - start}ms")
             }
-
-
         }
     }
 
-    fun mapEventType(eventType: Int?) : String{
+    private fun mapEventType(eventType: Int?) : String{
         var value = "";
         when (eventType){
             AccessibilityEvent.TYPE_VIEW_CLICKED -> value = "TYPE_VIEW_CLICKED"
@@ -205,8 +169,9 @@ class AccessibilityServiceListener : AccessibilityService() {
         }
     }
 
+    // Método que será chamado para capturar a tela
     @RequiresApi(Build.VERSION_CODES.R)
-    fun extractTextFromImage(onTextExtracted: (String) -> Unit) {
+    fun getScreenshot() {
         val executor: Executor = Executors.newSingleThreadExecutor()
 
         // Callback que recebe o bitmap da screenshot
@@ -219,49 +184,95 @@ class AccessibilityServiceListener : AccessibilityService() {
 
                 // Processar o bitmap e retornar o texto extraído
                 bitmap?.let {
-                    processBitmap(it) { extractedText ->
-                        onTextExtracted(extractedText)
-                    }
+                    processScreenshot(it)
                 } ?: run {
-                    Log.d("BITMAP_ERROR", "Falha ao capturar o bitmap")
-                    onTextExtracted("Erro ao capturar o bitmap")
+                    Log.e(Constants.LOG_TAG, "Falha ao capturar o bitmap")
                 }
             }
 
             override fun onFailure(errorCode: Int) {
-                Log.d("SCREENSHOT_FAILED", "Falha ao tirar screenshot. Código de erro: $errorCode")
-                onTextExtracted("Erro ao tirar screenshot. Código de erro: $errorCode")
+                Log.e(Constants.LOG_TAG,  "Falha ao tirar screenshot. Código de erro: $errorCode")
             }
         }
 
-        // Tirar a screenshot
-        takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
-    }
+        val currentTime = System.currentTimeMillis()
 
+        // Verifica se já passou o tempo mínimo de 2 segundos
+        if (currentTime - lastScreenshotTime >= debounceTime) {
+            lastScreenshotTime = currentTime
 
-    private fun saveBitmapToCache(bitmap: Bitmap): String? {
-        return try {
-            // Diretório temporário do cache
-            val cacheDir = cacheDir  // Ou use externalCacheDir para o cache externo
-
-            // Crie o arquivo no cache
-            val fileName = "screenshot_${System.currentTimeMillis()}.jpg"
-            val file = File(cacheDir, fileName)
-
-            val outputStream = FileOutputStream(file)
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 90, outputStream)
-            outputStream.flush()
-            outputStream.close()
-
-            Log.i("AccessibilityPlugin", "Screenshot salva no cache: ${file.absolutePath}")
-            file.absolutePath  // Retorna o caminho completo do arquivo
-        } catch (e: Exception) {
-            Log.i("AccessibilityPlugin", "Erro ao salvar a screenshot: ${e.message}")
-            null
+            takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
         }
+//        else {
+//            // Debounce: Se foi chamado antes de 2 segundos, agenda para rodar após o intervalo
+//            runnable?.let { handler.removeCallbacks(it) }
+//            runnable = Runnable {
+//                lastScreenshotTime = System.currentTimeMillis()
+//                takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
+//            }
+//            handler.postDelayed(runnable!!, debounceTime - (currentTime - lastScreenshotTime))
+//        }
     }
 
-    private fun processBitmap(bitmap: Bitmap, onComplete: (String) -> Unit) {
+    // Processa a captura de tela e compara com o bitmap anterior
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun processScreenshot(newBitmap: Bitmap) {
+        lastBitmap?.let {
+            // Comparação com o bitmap anterior
+            val differencePercentage = getBitmapDifferencePercentageOptimized(it, newBitmap, step = 10)
+
+            if (differencePercentage > differenceThreshold) {
+                Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}% detectada, executando OCR...")
+                // Executar OCR somente se a diferença for significativa
+                executeOCR(newBitmap)
+            } else {
+                Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}%, ignorando OCR.")
+            }
+        } ?: run {
+            // Se não houver bitmap anterior, execute OCR
+            Log.d(Constants.LOG_TAG, "Primeira captura, executando OCR...")
+            executeOCR(newBitmap)
+        }
+
+        // Atualiza o bitmap anterior para o novo
+        lastBitmap = newBitmap
+    }
+
+    private fun convertToBitmapWithAccess(bitmap: Bitmap): Bitmap {
+        // Converte o Bitmap para ARGB_8888, permitindo acesso aos pixels
+        return bitmap.copy(Bitmap.Config.ARGB_8888, false)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.O)
+    private fun getBitmapDifferencePercentageOptimized(bitmap1: Bitmap, bitmap2: Bitmap, step: Int = 10): Double {
+        // Verifica se os bitmaps estão em Config.HARDWARE e converte se necessário
+        val bitmap1Converted = if (bitmap1.config == Bitmap.Config.HARDWARE) convertToBitmapWithAccess(bitmap1) else bitmap1
+        val bitmap2Converted = if (bitmap2.config == Bitmap.Config.HARDWARE) convertToBitmapWithAccess(bitmap2) else bitmap2
+
+        if (bitmap1Converted.width != bitmap2Converted.width || bitmap1Converted.height != bitmap2Converted.height) {
+            return 100.0 // Se as dimensões forem diferentes, considere 100% de diferença
+        }
+
+        var differentPixels = 0
+        var checkedPixels = 0
+
+        // Verifica pixel a pixel, mas saltando um número de pixels definido pelo 'step'
+        for (x in 0 until bitmap1Converted.width step step) {
+            for (y in 0 until bitmap1Converted.height step step) {
+                if (bitmap1Converted.getPixel(x, y) != bitmap2Converted.getPixel(x, y)) {
+                    differentPixels++
+                }
+                checkedPixels++ // Conta os pixels verificados
+            }
+        }
+
+        // Calcula a porcentagem de pixels diferentes em relação aos pixels verificados
+        return (differentPixels.toDouble() / checkedPixels) * 100
+    }
+
+    // Função para executar OCR (substitua com a sua lógica de OCR)
+    private fun executeOCR(bitmap: Bitmap) {
+        Log.d(Constants.LOG_TAG, "Executando OCR na imagem...")
         // Crie um InputImage a partir do bitmap
         val image = InputImage.fromBitmap(bitmap, 0)
 
@@ -271,16 +282,16 @@ class AccessibilityServiceListener : AccessibilityService() {
         // Processa a imagem
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
-                // Retorna o texto completo extraído
+                val text = processTextRecognitionResult(visionText)
 
-                onComplete(processTextRecognitionResult(visionText))
-//                onComplete(visionText.text)
-
+                // Envia o texto e a imagem para o flutter
+                val intent = Intent(Constants.ACCESSIBILITY_INTENT)
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, image = bitmapToBase64(bitmap))))
+                sendBroadcast(intent)
 
             }
             .addOnFailureListener { e ->
-                // Em caso de falha, retorna uma mensagem de erro
-                onComplete("Erro ao reconhecer texto: ${e.message}")
+                Log.e(Constants.LOG_TAG, "Erro ao reconhecer texto: ${e.message}")
             }
     }
 
@@ -302,6 +313,14 @@ class AccessibilityServiceListener : AccessibilityService() {
         }
 
         return extractedText.toString()
+    }
+
+    // Função para converter um Bitmap em uma string base64
+    private fun bitmapToBase64(bitmap: Bitmap): String {
+        val byteArrayOutputStream = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 30, byteArrayOutputStream) // Usar JPEG e compressão de 50%
+        val byteArray = byteArrayOutputStream.toByteArray()
+        return Base64.encodeToString(byteArray, Base64.DEFAULT)
     }
 }
 
