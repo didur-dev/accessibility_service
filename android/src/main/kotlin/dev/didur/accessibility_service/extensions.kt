@@ -19,6 +19,7 @@ import androidx.emoji2.text.EmojiCompat
 import es.dmoral.toasty.Toasty
 import java.io.File
 import java.io.FileOutputStream
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
@@ -56,9 +57,11 @@ fun Context.splitScreen() = performAction(AccessibilityService.GLOBAL_ACTION_TOG
 @RequiresApi(Build.VERSION_CODES.P)
 fun Context.screenshot() = performAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
 
-fun Context.saveScreenshot() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+@RequiresApi(Build.VERSION_CODES.N)
+fun Context.saveScreenshot(quality: Int = 50): CompletableFuture<String?> {
+    val screenshotPathFuture = CompletableFuture<String?>()
 
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
         val executor: Executor = Executors.newSingleThreadExecutor()
 
         // Callback que recebe o bitmap da screenshot
@@ -69,29 +72,41 @@ fun Context.saveScreenshot() {
                     Bitmap.wrapHardwareBuffer(it, screenshot.colorSpace)
                 }
 
-                // Processar o bitmap e retornar o texto extraído
+                // Processar o bitmap e retornar o caminho do arquivo
                 bitmap?.let {
                     val file = File(cacheDir, "image_screenshot.png")
 
                     // Salva o Bitmap como PNG no cache
-                    val outputStream = FileOutputStream(file)
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 50, outputStream)
-                    outputStream.flush()
-                    outputStream.close()
+                    try {
+                        val outputStream = FileOutputStream(file)
+                        bitmap.compress(Bitmap.CompressFormat.PNG, quality, outputStream)
+                        outputStream.flush()
+                        outputStream.close()
 
-                    Log.d(Constants.LOG_TAG, "Screenshot salva: ${file.absolutePath}")
+                        Log.d(Constants.LOG_TAG, "Screenshot salva: ${file.absolutePath}")
+                        screenshotPathFuture.complete(file.absolutePath)
+                    } catch (e: Exception) {
+                        Log.e(Constants.LOG_TAG, "Falha ao salvar a screenshot", e)
+                        screenshotPathFuture.complete(null)
+                    }
                 } ?: run {
                     Log.e(Constants.LOG_TAG, "Falha ao capturar o bitmap")
+                    screenshotPathFuture.complete(null)
                 }
             }
 
             override fun onFailure(errorCode: Int) {
                 Log.e(Constants.LOG_TAG, "Falha ao tirar screenshot. Código de erro: $errorCode")
+                screenshotPathFuture.complete(null)
             }
         }
 
         require().takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
+    } else {
+        screenshotPathFuture.complete(null)
     }
+
+    return screenshotPathFuture
 }
 
 fun CharSequence?.nullableString() = if (this.isNullOrBlank()) "" else this.toString()

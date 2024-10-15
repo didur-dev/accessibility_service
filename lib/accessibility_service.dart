@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/services.dart';
 
@@ -62,7 +63,18 @@ class AccessibilityService {
 
   Future<bool?> actionScreenshot() => methodChannel.invokeMethod<bool>('actionScreenshot');
 
-  Future<bool?> saveScreenshot() => methodChannel.invokeMethod<bool>('saveScreenshot');
+  Future<Uint8List?> saveScreenshot({int quality = 50}) async {
+    var filePath = await methodChannel.invokeMethod<String>('saveScreenshot', {
+      'quality': quality,
+    });
+
+    if (filePath != null) {
+      var file = File(filePath);
+      return file.readAsBytesSync();
+    }
+    
+    return null;
+  }
 
   /// Show toast
   /// @param message [String]

@@ -106,7 +106,11 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
             "actionLockScreen" -> result.success(context.lockScreen())
             "actionSplitScreen" -> result.success(context.splitScreen())
             "actionScreenshot" -> result.success(context.screenshot())
-            "saveScreenshot" -> context.saveScreenshot()
+            "saveScreenshot" -> {
+                context.saveScreenshot(call.argument<Int?>("quality") ?: 50).thenAccept { path ->
+                    result.success(path)
+                }
+            }
             "actionFindTextAndClick" -> actionFindTextAndClick(call.arguments as Map<*, *>?, result)
             "actionFindTreeIdAndClick" -> actionFindTreeIdAndClick(call.arguments as Map<*, *>?, result)
             "showToast" -> context.showToast(call.argument<String?>("message") ?: "")
@@ -114,10 +118,11 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
                 call.argument<String?>("message") ?: "",
                 call.argument<Int>("vertical") ?: 1,
                 call.argument<Int>("horizontal") ?: 1,
-                )
+            )
             else -> result.notImplemented()
         }
     }
+
 
 
     private fun requestPermission(result: Result) {
