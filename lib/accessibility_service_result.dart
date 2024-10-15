@@ -3,13 +3,13 @@ import 'accessibility_service_node.dart';
 
 class AccessibilityServiceResult {
   String? text;
-  String? image;
+  String? imagePath;
   AccessibilityServiceEvent? event;
   Map<String, AccessibilityServiceNode>? nodes;
 
   AccessibilityServiceResult({
     this.text,
-    this.image,
+    this.imagePath,
     this.event,
     this.nodes,
   });
@@ -21,7 +21,7 @@ class AccessibilityServiceResult {
   }) {
     return AccessibilityServiceResult(
       text: text ?? this.text,
-      image: image ?? this.image,
+      imagePath: imagePath ?? this.imagePath,
       event: event ?? this.event,
       nodes: nodes ?? this.nodes,
     );
@@ -30,7 +30,7 @@ class AccessibilityServiceResult {
   Map<String, dynamic> toJson() {
     return {
       'text': text,
-      'image': image,
+      'imagePath': imagePath,
       'event': event,
       'nodes': nodes,
     };
@@ -39,7 +39,7 @@ class AccessibilityServiceResult {
   factory AccessibilityServiceResult.fromJson(Map<String, dynamic> json) {
     return AccessibilityServiceResult(
       text: json['text'] == null ? null : json['text'],
-      image: json['image'] == null ? null : json['image'],
+      imagePath: json['imagePath'] == null ? null : json['imagePath'],
       event: json['event'] == null ? null : AccessibilityServiceEvent.fromJson(Map.from(json['event'])),
       nodes: (json['nodes'] as Map<dynamic, dynamic>?)
           ?.map((k, e) => MapEntry(k!, AccessibilityServiceNode.fromJson(Map.from(e)))),
@@ -50,7 +50,7 @@ class AccessibilityServiceResult {
   String toString() {
     String str = '\n---↓↓↓ RESULT ↓↓↓---\nEVENT:\n$event\nNODES:\n';
     str += '$text\n' ?? '';
-    str += '$image\n' ?? '';
+    str += '$imagePath\n' ?? '';
     nodes?.forEach((treeId, e) {
       str += '$treeId : $e\n';
     });
@@ -59,7 +59,7 @@ class AccessibilityServiceResult {
   }
 
   @override
-  int get hashCode => Object.hash(text, event, nodes);
+  int get hashCode => Object.hash(text, imagePath, event, nodes);
 
   @override
   bool operator ==(Object other) =>
@@ -67,6 +67,7 @@ class AccessibilityServiceResult {
       other is AccessibilityServiceResult &&
           runtimeType == other.runtimeType &&
           text == other.text &&
+          imagePath == other.imagePath &&
           event == other.event &&
           nodes == other.nodes;
 }

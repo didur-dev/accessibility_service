@@ -24,20 +24,21 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
 import com.google.mlkit.vision.text.Text
-import java.io.ByteArrayOutputStream
 
 
 class AccessibilityServiceListener : AccessibilityService() {
     private val executor: ExecutorService = Executors.newFixedThreadPool(4)
 
+    private val differenceThreshold = 5.0       // Limite de 5% de diferença
+    private val maxFiles = 10                   // Limite de 10 imagens no cache
+
     private var lastScreenshotTime: Long = 0
-    private val debounceTime: Long = 2000 // 2 segundos de debounce
-    private var lastBitmap: Bitmap? = null // Armazena o último bitmap capturado
+    private val debounceTime: Long = 2000       // 2 segundos de debounce
+    private var lastBitmap: Bitmap? = null      // Armazena o último bitmap capturado
+
     private val handler = Handler(Looper.getMainLooper())
     private var runnable: Runnable? = null
-    private val differenceThreshold = 5.0 // Limite de 5% de diferença
 
     companion object {
         // Exported Accessibility Service Instance
@@ -91,7 +92,7 @@ class AccessibilityServiceListener : AccessibilityService() {
             val source = event.source
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                getScreenshot()
+                getScreenshot(packageName)
             }
 
             executor.execute {
@@ -171,7 +172,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     // Método que será chamado para capturar a tela
     @RequiresApi(Build.VERSION_CODES.R)
-    fun getScreenshot() {
+    fun getScreenshot(packageName: String) {
         val executor: Executor = Executors.newSingleThreadExecutor()
 
         // Callback que recebe o bitmap da screenshot
@@ -184,7 +185,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
                 // Processar o bitmap e retornar o texto extraído
                 bitmap?.let {
-                    processScreenshot(it)
+                    processScreenshot(it, packageName)
                 } ?: run {
                     Log.e(Constants.LOG_TAG, "Falha ao capturar o bitmap")
                 }
@@ -216,7 +217,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     // Processa a captura de tela e compara com o bitmap anterior
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun processScreenshot(newBitmap: Bitmap) {
+    private fun processScreenshot(newBitmap: Bitmap, packageName: String) {
         lastBitmap?.let {
             // Comparação com o bitmap anterior
             val differencePercentage = getBitmapDifferencePercentageOptimized(it, newBitmap, step = 10)
@@ -224,14 +225,14 @@ class AccessibilityServiceListener : AccessibilityService() {
             if (differencePercentage > differenceThreshold) {
                 Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}% detectada, executando OCR...")
                 // Executar OCR somente se a diferença for significativa
-                executeOCR(newBitmap)
+                executeOCR(newBitmap, packageName)
             } else {
                 Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}%, ignorando OCR.")
             }
         } ?: run {
             // Se não houver bitmap anterior, execute OCR
             Log.d(Constants.LOG_TAG, "Primeira captura, executando OCR...")
-            executeOCR(newBitmap)
+            executeOCR(newBitmap, packageName)
         }
 
         // Atualiza o bitmap anterior para o novo
@@ -271,7 +272,7 @@ class AccessibilityServiceListener : AccessibilityService() {
     }
 
     // Função para executar OCR (substitua com a sua lógica de OCR)
-    private fun executeOCR(bitmap: Bitmap) {
+    private fun executeOCR(bitmap: Bitmap, packageName: String) {
         Log.d(Constants.LOG_TAG, "Executando OCR na imagem...")
         // Crie um InputImage a partir do bitmap
         val image = InputImage.fromBitmap(bitmap, 0)
@@ -286,7 +287,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
                 // Envia o texto e a imagem para o flutter
                 val intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, image = bitmapToBase64(bitmap))))
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, packageName))))
                 sendBroadcast(intent)
 
             }
@@ -315,12 +316,32 @@ class AccessibilityServiceListener : AccessibilityService() {
         return extractedText.toString()
     }
 
-    // Função para converter um Bitmap em uma string base64
-    private fun bitmapToBase64(bitmap: Bitmap): String {
-        val byteArrayOutputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 30, byteArrayOutputStream) // Usar JPEG e compressão de 50%
-        val byteArray = byteArrayOutputStream.toByteArray()
-        return Base64.encodeToString(byteArray, Base64.DEFAULT)
+
+    // Função para salvar o Bitmap no cache, limitando a 10 arquivos
+    private fun saveBitmapToCache(bitmap: Bitmap, packageName: String): String {
+        val cacheDir = cacheDir
+        val fileName = "image_${packageName}_${System.currentTimeMillis()}.png"
+        val file = File(cacheDir, fileName)
+
+        // Salva o Bitmap como PNG no cache
+        val outputStream = FileOutputStream(file)
+        bitmap.compress(Bitmap.CompressFormat.PNG, 30, outputStream)
+        outputStream.flush()
+        outputStream.close()
+
+        // Limita o cache a 10 arquivos
+        limitCacheFiles(cacheDir, maxFiles)
+
+        return file.absolutePath
+    }
+
+    // Função para limitar o número de arquivos no cache
+    private fun limitCacheFiles(cacheDir: File, maxFiles: Int) {
+        val files = cacheDir.listFiles()
+        if (files != null && files.size > maxFiles) {
+            // Ordena os arquivos por data de modificação (os mais antigos primeiro)
+            files.sortedBy { it.lastModified() }.take(files.size - maxFiles).forEach { it.delete() }
+        }
     }
 }
 
