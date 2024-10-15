@@ -62,6 +62,8 @@ class AccessibilityService {
 
   Future<bool?> actionScreenshot() => methodChannel.invokeMethod<bool>('actionScreenshot');
 
+  Future<bool?> saveScreenshot() => methodChannel.invokeMethod<bool>('saveScreenshot');
+
   /// Show toast
   /// @param message [String]
   Future<bool?> showToast(String message) => methodChannel.invokeMethod<bool>('showToast', {

@@ -3,17 +3,24 @@ package dev.didur.accessibility_service
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.text.Html
 import android.text.Spanned
+import android.util.Log
+import android.view.Display
 import android.view.Gravity
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.emoji2.text.EmojiCompat
 import es.dmoral.toasty.Toasty
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 
 
 fun Context.performAction(action: Int) = require().performGlobalAction(action)
@@ -48,6 +55,44 @@ fun Context.splitScreen() = performAction(AccessibilityService.GLOBAL_ACTION_TOG
 // Screenshot
 @RequiresApi(Build.VERSION_CODES.P)
 fun Context.screenshot() = performAction(AccessibilityService.GLOBAL_ACTION_TAKE_SCREENSHOT)
+
+fun Context.saveScreenshot() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+
+        val executor: Executor = Executors.newSingleThreadExecutor()
+
+        // Callback que recebe o bitmap da screenshot
+        val screenshotCallback = object : AccessibilityService.TakeScreenshotCallback {
+            override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+                // Obter o bitmap da screenshot
+                val bitmap: Bitmap? = screenshot.hardwareBuffer?.let {
+                    Bitmap.wrapHardwareBuffer(it, screenshot.colorSpace)
+                }
+
+                // Processar o bitmap e retornar o texto extraído
+                bitmap?.let {
+                    val file = File(cacheDir, "image_screenshot.png")
+
+                    // Salva o Bitmap como PNG no cache
+                    val outputStream = FileOutputStream(file)
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 50, outputStream)
+                    outputStream.flush()
+                    outputStream.close()
+
+                    Log.d(Constants.LOG_TAG, "Screenshot salva: ${file.absolutePath}")
+                } ?: run {
+                    Log.e(Constants.LOG_TAG, "Falha ao capturar o bitmap")
+                }
+            }
+
+            override fun onFailure(errorCode: Int) {
+                Log.e(Constants.LOG_TAG, "Falha ao tirar screenshot. Código de erro: $errorCode")
+            }
+        }
+
+        require().takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
+    }
+}
 
 fun CharSequence?.nullableString() = if (this.isNullOrBlank()) "" else this.toString()
 

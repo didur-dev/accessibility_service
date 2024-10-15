@@ -285,9 +285,11 @@ class AccessibilityServiceListener : AccessibilityService() {
             .addOnSuccessListener { visionText ->
                 val text = processTextRecognitionResult(visionText)
 
+                val fileName = "${packageName}_${System.currentTimeMillis()}"
+
                 // Envia o texto e a imagem para o flutter
                 val intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, packageName))))
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, fileName))))
                 sendBroadcast(intent)
 
             }
@@ -318,10 +320,9 @@ class AccessibilityServiceListener : AccessibilityService() {
 
 
     // Função para salvar o Bitmap no cache, limitando a 10 arquivos
-    private fun saveBitmapToCache(bitmap: Bitmap, packageName: String): String {
+    private fun saveBitmapToCache(bitmap: Bitmap, fileName: String): String {
         val cacheDir = cacheDir
-        val fileName = "image_${packageName}_${System.currentTimeMillis()}.png"
-        val file = File(cacheDir, fileName)
+        val file = File(cacheDir, "image_$fileName.png")
 
         // Salva o Bitmap como PNG no cache
         val outputStream = FileOutputStream(file)

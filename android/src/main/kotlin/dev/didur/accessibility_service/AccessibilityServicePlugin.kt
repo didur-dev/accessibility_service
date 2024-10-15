@@ -106,6 +106,7 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
             "actionLockScreen" -> result.success(context.lockScreen())
             "actionSplitScreen" -> result.success(context.splitScreen())
             "actionScreenshot" -> result.success(context.screenshot())
+            "saveScreenshot" -> context.saveScreenshot()
             "actionFindTextAndClick" -> actionFindTextAndClick(call.arguments as Map<*, *>?, result)
             "actionFindTreeIdAndClick" -> actionFindTreeIdAndClick(call.arguments as Map<*, *>?, result)
             "showToast" -> context.showToast(call.argument<String?>("message") ?: "")
