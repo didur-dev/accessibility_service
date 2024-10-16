@@ -12,9 +12,9 @@ import androidx.annotation.RequiresApi
 import java.util.SortedMap
 
 data class EventWrapper(
-    var packageName: String,
-    var className: String,
-    var type: String
+    var packageName: String?,
+    var className: String?,
+    var type: String?
 ) {
     override fun toString() = "$packageName → $className → $type"
 }

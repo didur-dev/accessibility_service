@@ -91,17 +91,13 @@ class AccessibilityServiceListener : AccessibilityService() {
             val description = it.contentDescription.nullableString()
             val source = event.source
 
+            val eventWarper = EventWrapper(packageName, className, mapEventType(eventType))
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                getScreenshot(packageName)
+                getScreenshot(eventWarper)
             }
 
             executor.execute {
-                var eventWarper: EventWrapper? = null;
-
-                if (className.isNotBlank() && packageName.isNotBlank()) {
-                    eventWarper = EventWrapper(packageName, className, mapEventType(eventType))
-                }
-
                 val result = analyze(source, eventWarper)
 
                 val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
@@ -172,7 +168,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     // Método que será chamado para capturar a tela
     @RequiresApi(Build.VERSION_CODES.R)
-    fun getScreenshot(packageName: String) {
+    fun getScreenshot(eventWrapper: EventWrapper) {
         val executor: Executor = Executors.newSingleThreadExecutor()
 
         // Callback que recebe o bitmap da screenshot
@@ -185,7 +181,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
                 // Processar o bitmap e retornar o texto extraído
                 bitmap?.let {
-                    processScreenshot(it, packageName)
+                    processScreenshot(it, eventWrapper)
                 } ?: run {
                     Log.e(Constants.LOG_TAG, "Falha ao capturar o bitmap")
                 }
@@ -204,20 +200,11 @@ class AccessibilityServiceListener : AccessibilityService() {
 
             takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
         }
-//        else {
-//            // Debounce: Se foi chamado antes de 2 segundos, agenda para rodar após o intervalo
-//            runnable?.let { handler.removeCallbacks(it) }
-//            runnable = Runnable {
-//                lastScreenshotTime = System.currentTimeMillis()
-//                takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
-//            }
-//            handler.postDelayed(runnable!!, debounceTime - (currentTime - lastScreenshotTime))
-//        }
     }
 
     // Processa a captura de tela e compara com o bitmap anterior
     @RequiresApi(Build.VERSION_CODES.O)
-    private fun processScreenshot(newBitmap: Bitmap, packageName: String) {
+    private fun processScreenshot(newBitmap: Bitmap, eventWrapper: EventWrapper) {
         lastBitmap?.let {
             // Comparação com o bitmap anterior
             val differencePercentage = getBitmapDifferencePercentageOptimized(it, newBitmap, step = 10)
@@ -225,14 +212,14 @@ class AccessibilityServiceListener : AccessibilityService() {
             if (differencePercentage > differenceThreshold) {
                 Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}% detectada, executando OCR...")
                 // Executar OCR somente se a diferença for significativa
-                executeOCR(newBitmap, packageName)
+                executeOCR(newBitmap, eventWrapper)
             } else {
                 Log.d(Constants.LOG_TAG, "Diferença de ${String.format("%.2f", differencePercentage)}%, ignorando OCR.")
             }
         } ?: run {
             // Se não houver bitmap anterior, execute OCR
             Log.d(Constants.LOG_TAG, "Primeira captura, executando OCR...")
-            executeOCR(newBitmap, packageName)
+            executeOCR(newBitmap, eventWrapper)
         }
 
         // Atualiza o bitmap anterior para o novo
@@ -272,7 +259,7 @@ class AccessibilityServiceListener : AccessibilityService() {
     }
 
     // Função para executar OCR (substitua com a sua lógica de OCR)
-    private fun executeOCR(bitmap: Bitmap, packageName: String) {
+    private fun executeOCR(bitmap: Bitmap, eventWrapper: EventWrapper) {
         Log.d(Constants.LOG_TAG, "Executando OCR na imagem...")
         // Crie um InputImage a partir do bitmap
         val image = InputImage.fromBitmap(bitmap, 0)
@@ -285,11 +272,11 @@ class AccessibilityServiceListener : AccessibilityService() {
             .addOnSuccessListener { visionText ->
                 val text = processTextRecognitionResult(visionText)
 
-                val fileName = "${packageName}_${System.currentTimeMillis()}"
+                val fileName = "${eventWrapper.packageName}_${System.currentTimeMillis()}"
 
                 // Envia o texto e a imagem para o flutter
                 val intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, fileName))))
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, fileName), event = eventWrapper)))
                 sendBroadcast(intent)
 
             }
