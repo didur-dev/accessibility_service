@@ -94,7 +94,9 @@ class AccessibilityServiceListener : AccessibilityService() {
             val eventWarper = EventWrapper(packageName, className, mapEventType(eventType))
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                getScreenshot(eventWarper)
+                if(!event.packageName.equals("com.ubercab.driver")) {
+                    getScreenshot(eventWarper)
+                }
             }
 
             executor.execute {
