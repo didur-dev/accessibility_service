@@ -84,6 +84,8 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event?.let {
+            Settings.loadPreferences(applicationContext)
+
             val className = it.className.nullableString()
             val packageName = it.packageName.nullableString()
             val eventType = it.eventType
@@ -95,7 +97,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                 if(!event.packageName.equals("com.ubercab.driver")) {
-                    getScreenshot(eventWarper)
+                    takeScreenshotForOCR(eventWarper)
                 }
             }
 
@@ -170,14 +172,14 @@ class AccessibilityServiceListener : AccessibilityService() {
 
     // Método que será chamado para capturar a tela
     @RequiresApi(Build.VERSION_CODES.R)
-    fun getScreenshot(eventWrapper: EventWrapper) {
+    fun takeScreenshotForOCR(eventWrapper: EventWrapper) {
         val executor: Executor = Executors.newSingleThreadExecutor()
 
         // Callback que recebe o bitmap da screenshot
-        val screenshotCallback = object : AccessibilityService.TakeScreenshotCallback {
-            override fun onSuccess(screenshot: AccessibilityService.ScreenshotResult) {
+        val screenshotCallback = object : TakeScreenshotCallback {
+            override fun onSuccess(screenshot: ScreenshotResult) {
                 // Obter o bitmap da screenshot
-                val bitmap: Bitmap? = screenshot.hardwareBuffer?.let {
+                val bitmap: Bitmap? = screenshot.hardwareBuffer.let {
                     Bitmap.wrapHardwareBuffer(it, screenshot.colorSpace)
                 }
 
@@ -274,11 +276,16 @@ class AccessibilityServiceListener : AccessibilityService() {
             .addOnSuccessListener { visionText ->
                 val text = processTextRecognitionResult(visionText)
 
-                val fileName = "${eventWrapper.packageName}_${System.currentTimeMillis()}"
+                var imagePath : String? = null
+                Log.d(Constants.LOG_TAG, "Salvar print: ${Settings.tirarPrintSolicitacaoCorrida}")
+                if(Settings.tirarPrintSolicitacaoCorrida){
+                    val fileName = "${eventWrapper.packageName}_${System.currentTimeMillis()}"
+                    imagePath = saveBitmapToCache(bitmap, fileName)
+                }
 
                 // Envia o texto e a imagem para o flutter
                 val intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = saveBitmapToCache(bitmap, fileName), event = eventWrapper)))
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = imagePath, event = eventWrapper)))
                 sendBroadcast(intent)
 
             }

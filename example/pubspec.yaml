@@ -16,15 +16,15 @@ dependencies:
     # The example app is bundled with the plugin so we use a path dependency on
     # the parent directory to use the current plugin's version.
     path: ../
-  flutter_background_service: ^5.0.5
-  flutter_local_notifications: ^17.0.0
-  shared_preferences: ^2.2.2
-  device_info_plus: ^10.0.1
+  flutter_background_service: ^5.0.10
+  flutter_local_notifications: ^18.0.1
+  shared_preferences: ^2.3.3
+  device_info_plus: ^11.1.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
+  flutter_lints: ^5.0.0
 
 flutter:
   uses-material-design: true

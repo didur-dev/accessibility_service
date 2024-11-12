@@ -56,6 +56,7 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         context = flutterPluginBinding.applicationContext
+        Settings.loadPreferences(context)
 
         EventChannel(flutterPluginBinding.binaryMessenger, Constants.EVENT_CHANNEL_NAME).setStreamHandler(object : StreamHandler {
             override fun onListen(arguments: Any?, events: EventSink?) {
