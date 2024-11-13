@@ -12,7 +12,7 @@ object Settings {
                 "FlutterSharedPreferences",
                 Context.MODE_PRIVATE
             )
-        sharedPref.edit().putBoolean("settings_tirarPrintSolicitacaoCorrida", tirarPrintSolicitacaoCorrida).apply()
+        sharedPref.edit().putString("settings_tirarPrintSolicitacaoCorrida", tirarPrintSolicitacaoCorrida.toString()).apply()
     }
 
     fun loadPreferences(context: Context) {
@@ -21,6 +21,6 @@ object Settings {
                 "FlutterSharedPreferences",
                 Context.MODE_PRIVATE
             )
-        tirarPrintSolicitacaoCorrida = sharedPref.getBoolean("settings_tirarPrintSolicitacaoCorrida", tirarPrintSolicitacaoCorrida)
+        tirarPrintSolicitacaoCorrida = sharedPref.getString("settings_tirarPrintSolicitacaoCorrida", tirarPrintSolicitacaoCorrida.toString()).toBoolean()
     }
 }
