@@ -5,9 +5,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
@@ -112,6 +114,7 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
                     result.success(path)
                 }
             }
+            "performActionById" -> performActionById(call.arguments as Map<*, *>?, result)
             "actionFindTextAndClick" -> actionFindTextAndClick(call.arguments as Map<*, *>?, result)
             "actionFindTreeIdAndClick" -> actionFindTreeIdAndClick(call.arguments as Map<*, *>?, result)
             "showToast" -> context.showToast(call.argument<String?>("message") ?: "")
@@ -124,6 +127,79 @@ class AccessibilityServicePlugin : FlutterPlugin, MethodCallHandler, DefaultLife
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.N)
+    private fun performActionById(arguments: Map<*, *>?, result: Result) {
+        arguments?.let {
+            val nodeId = it["nodeId"] as? String
+            val action = it["nodeAction"] as? Int
+            val extras = it["extras"]
+
+            if (nodeId == null || action == null) {
+                result.error("INVALID_ARGUMENTS", "Missing nodeId or nodeAction.", null)
+                return
+            }
+
+            try {
+                // Recupera o nó pelo ID
+                val nodeInfo = AccessibilityServiceListener.getNodeInfo(nodeId)
+
+                val bundle = bundleIdentifier(action, extras)
+                val success = if (bundle != null) {
+                    nodeInfo.performAction(action, bundle)
+                } else {
+                    nodeInfo.performAction(action)
+                }
+
+                // Retorna o sucesso da operação
+                result.success(success)
+            } catch (e: Exception) {
+                Log.e("AccessibilityPlugin", "Error performing action by ID", e)
+                result.error("PERFORM_ACTION_ERROR", "Error executing action: ${e.message}", null)
+            }
+        } ?: run {
+            result.error("INVALID_ARGUMENTS", "Arguments cannot be null.", null)
+        }
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+    fun bundleIdentifier(actionType: Int, extra: Any?): Bundle? {
+        var arguments: Bundle? = Bundle()
+        if (extra == null) return null
+        when (actionType) {
+            AccessibilityNodeInfo.ACTION_SET_TEXT -> {
+                arguments!!.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, extra as String)
+            }
+            AccessibilityNodeInfo.ACTION_NEXT_AT_MOVEMENT_GRANULARITY -> {
+                arguments!!.putInt(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                    AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER
+                )
+                arguments.putBoolean(AccessibilityNodeInfo.ACTION_ARGUMENT_EXTEND_SELECTION_BOOLEAN, extra as Boolean)
+            }
+            AccessibilityNodeInfo.ACTION_NEXT_HTML_ELEMENT -> {
+                arguments!!.putString(AccessibilityNodeInfo.ACTION_ARGUMENT_HTML_ELEMENT_STRING, extra as String)
+            }
+            AccessibilityNodeInfo.ACTION_PREVIOUS_AT_MOVEMENT_GRANULARITY -> {
+                arguments!!.putInt(
+                    AccessibilityNodeInfo.ACTION_ARGUMENT_MOVEMENT_GRANULARITY_INT,
+                    AccessibilityNodeInfo.MOVEMENT_GRANULARITY_CHARACTER
+                )
+                arguments.putBoolean(AccessibilityNodeInfo.ACTION_ARGUMENT_EXTEND_SELECTION_BOOLEAN, extra as Boolean)
+            }
+            AccessibilityNodeInfo.ACTION_PREVIOUS_HTML_ELEMENT -> {
+                arguments!!.putString(AccessibilityNodeInfo.ACTION_ARGUMENT_HTML_ELEMENT_STRING, extra as String)
+            }
+            AccessibilityNodeInfo.ACTION_SET_SELECTION -> {
+                val map = extra as HashMap<String, Int>
+                arguments!!.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, map["start"]!!)
+                arguments.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, map["end"]!!)
+            }
+            else -> {
+                arguments = null
+            }
+        }
+        return arguments
+    }
 
 
     private fun requestPermission(result: Result) {

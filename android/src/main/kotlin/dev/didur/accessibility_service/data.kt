@@ -9,12 +9,14 @@ import android.os.Bundle
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
+import java.util.Date
 import java.util.SortedMap
 
 data class EventWrapper(
     var packageName: String?,
     var className: String?,
-    var type: String?
+    var type: String?,
+    var dateTime: Date?
 ) {
     override fun toString() = "$packageName → $className → $type"
 }
@@ -43,15 +45,31 @@ data class NodeData(
     )
 }
 
+data class ClickableElement(
+    val id: String,
+    val text: String?,
+    val bounds: Rect) {
+
+    fun toMap() = mapOf(
+        "id" to id,
+        "text" to text,
+        "bounds" to bounds.let {
+            listOf(it.left, it.top, it.right, it.bottom)
+        },
+    )
+}
+
 data class AnalyzedResult(
     val text: String? = null,
     val imagePath: String? = null,
+    val clickableElements: MutableList<ClickableElement> = mutableListOf(),
     val event: EventWrapper? = null,
     val nodes: SortedMap<String, NodeData> = sortedMapOf(),
 ) {
     fun toMap() = mapOf(
         "text" to text,
         "imagePath" to imagePath,
+        "clickableElements" to clickableElements.map { it.toMap() },
         "event" to mapOf(
             "type" to event?.type,
             "packageName" to event?.packageName.nullableString(),

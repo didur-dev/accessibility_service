@@ -5,7 +5,10 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
+import android.util.LruCache
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
@@ -13,29 +16,31 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import io.flutter.embedding.android.FlutterView
 import java.io.File
 import java.io.FileOutputStream
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executor
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
-import android.os.Handler
-import android.os.Looper
-import com.google.mlkit.vision.text.Text
 
 
 class AccessibilityServiceListener : AccessibilityService() {
     private val executor: ExecutorService = Executors.newFixedThreadPool(4)
 
+
     private val differenceThreshold = 5.0       // Limite de 5% de diferença
     private val maxFiles = 10                   // Limite de 10 imagens no cache
 
     private var lastScreenshotTime: Long = 0
-    private val debounceTime: Long = 2000       // 2 segundos de debounce
     private var lastBitmap: Bitmap? = null      // Armazena o último bitmap capturado
+    private var now: Date? = null
 
     private val handler = Handler(Looper.getMainLooper())
     private var runnable: Runnable? = null
@@ -55,6 +60,13 @@ class AccessibilityServiceListener : AccessibilityService() {
 
         private var mWindowManager: WindowManager? = null
         private var mOverlayView: FlutterView? = null
+
+        private const val CACHE_SIZE: Int = 100
+        var nodeMap: LruCache<String, AccessibilityNodeInfo> = LruCache(CACHE_SIZE)
+
+        fun getNodeInfo(id: String?): AccessibilityNodeInfo {
+            return nodeMap[id]
+        }
     }
 
     // Get Root Node, if get error, return null
@@ -93,22 +105,61 @@ class AccessibilityServiceListener : AccessibilityService() {
             val description = it.contentDescription.nullableString()
             val source = event.source
 
-            val eventWarper = EventWrapper(packageName, className, mapEventType(eventType))
+            now = Date()
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if(!event.packageName.equals("com.ubercab.driver")) {
-                    takeScreenshotForOCR(eventWarper)
-                }
-            }
+            val eventWarper = EventWrapper(packageName, className, mapEventType(eventType), dateTime = now)
 
             executor.execute {
                 val result = analyze(source, eventWarper)
 
-                val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
-                sendBroadcast(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    takeScreenshotForOCR(eventWarper)
+                }
+
+//                val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
+//                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
+//                sendBroadcast(intent)
             }
         }
+    }
+
+    private fun generateNodeId(node: AccessibilityNodeInfo): String {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH:mm:ss", Locale.getDefault())
+        val datePart = dateFormat.format(now!!)
+        return  datePart +  "_" + node.windowId.toString() + "_" + node.className + "_" + node.text + "_" + node.contentDescription
+    }
+
+    private fun getNodesByDate(date: Date): MutableList<ClickableElement> {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH:mm:ss", Locale.getDefault())
+        val dateString = dateFormat.format(date)
+
+        val resultList = mutableListOf<ClickableElement>()
+        for (i in 0 until nodeMap.size()) {
+            val key = nodeMap.snapshot().keys.elementAt(i)
+            if (key.startsWith(dateString)) {
+                val node = nodeMap.get(key)
+                if (node != null) {
+                    val bounds = Rect()
+                    node.getBoundsInScreen(bounds)
+                    resultList.add(
+                        ClickableElement(
+                            id = key,
+                            text = node.text?.toString(),
+                            bounds = bounds
+                        )
+                    )
+                }
+            }
+        }
+        return resultList
+    }
+
+
+    private fun extractClickableElements(): MutableList<ClickableElement> {
+        val rootNode = rootInActiveWindow ?: return mutableListOf()
+        val result = AnalyzedResult()
+        analyzeTree(rootNode, result)
+        return result.clickableElements ?: mutableListOf()
     }
 
     private fun mapEventType(eventType: Int?) : String{
@@ -143,12 +194,12 @@ class AccessibilityServiceListener : AccessibilityService() {
 
 
     fun analyze(source: AccessibilityNodeInfo?, event: EventWrapper? = null): AnalyzedResult {
-        val result = AnalyzedResult(event = event)
+        val result = AnalyzedResult(event = event, clickableElements = mutableListOf())
         analyzeTree(source, result)
         return result
     }
 
-    private fun analyzeTree(node: AccessibilityNodeInfo?, list: AnalyzedResult, depth: List<Int>? = null) {
+    private fun analyzeTree(node: AccessibilityNodeInfo?, result: AnalyzedResult, depth: List<Int>? = null) {
         if (node == null) return
 
         val bounds = Rect()
@@ -161,11 +212,25 @@ class AccessibilityServiceListener : AccessibilityService() {
             bounds = bounds,
         )
 
-        list.nodes[trace.joinToString("-")] = data
+        result.nodes[trace.joinToString("-")] = data
+
+        // Salva o nó clicável no cache
+        if (node.isClickable) {
+            val nodeId = generateNodeId(node);
+
+            val clickableElement = ClickableElement(
+                id = nodeId,
+                text = node.text?.toString(),
+                bounds = bounds
+            )
+            result.clickableElements.add(clickableElement);
+
+            nodeMap.put(nodeId, node);
+        }
 
         if (node.childCount > 0) {
             for (i in 0 until node.childCount) {
-                analyzeTree(node.getChild(i), list, trace + i)
+                analyzeTree(node.getChild(i), result, trace + i)
             }
         }
     }
@@ -199,7 +264,7 @@ class AccessibilityServiceListener : AccessibilityService() {
         val currentTime = System.currentTimeMillis()
 
         // Verifica se já passou o tempo mínimo de 2 segundos
-        if (currentTime - lastScreenshotTime >= debounceTime) {
+        if (currentTime - lastScreenshotTime >= Settings.ocrIntervalo) {
             lastScreenshotTime = currentTime
 
             takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback)
@@ -262,6 +327,8 @@ class AccessibilityServiceListener : AccessibilityService() {
         return (differentPixels.toDouble() / checkedPixels) * 100
     }
 
+
+
     // Função para executar OCR (substitua com a sua lógica de OCR)
     private fun executeOCR(bitmap: Bitmap, eventWrapper: EventWrapper) {
         Log.d(Constants.LOG_TAG, "Executando OCR na imagem...")
@@ -275,6 +342,7 @@ class AccessibilityServiceListener : AccessibilityService() {
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val text = processTextRecognitionResult(visionText)
+                val clickableElements = getNodesByDate(now!!)
 
                 var imagePath : String? = null
                 Log.d(Constants.LOG_TAG, "Salvar print: ${Settings.tirarPrintSolicitacaoCorrida}")
@@ -285,7 +353,7 @@ class AccessibilityServiceListener : AccessibilityService() {
 
                 // Envia o texto e a imagem para o flutter
                 val intent = Intent(Constants.ACCESSIBILITY_INTENT)
-                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = imagePath, event = eventWrapper)))
+                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(AnalyzedResult(text = text, imagePath = imagePath, clickableElements = clickableElements, event = eventWrapper)))
                 sendBroadcast(intent)
 
             }
