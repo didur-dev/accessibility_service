@@ -48,7 +48,7 @@ class AccessibilityServiceResult {
       imagePath: json['imagePath'],
       clickableElements: json['clickableElements'] == null
           ? []
-          : List<ClickableElement>.from((json['clickableElements'] as List).map((e) => ClickableElement.fromJson(e))),
+          : (json['clickableElements'] as List<dynamic>).map((e) =>  ClickableElement.fromJson(e)).toList(),
       event: json['event'] == null ? null : AccessibilityServiceEvent.fromJson(Map.from(json['event'])),
       nodes: (json['nodes'] as Map<dynamic, dynamic>?)
           ?.map((k, e) => MapEntry(k!, AccessibilityServiceNode.fromJson(Map.from(e)))),
@@ -84,24 +84,21 @@ class AccessibilityServiceResult {
 class ClickableElement {
   final String id;
   final String? text;
-  List<int>? bounds;
 
   ClickableElement({
     required this.id,
     this.text,
-    required this.bounds,
   });
 
   factory ClickableElement.fromJson(Map<String, dynamic> json) {
     return ClickableElement(
       id: json['id'],
       text: json['text'],
-      bounds: (json['bounds'] as Map<String, dynamic>?)?.values.map((value) => value as int).toList(),
     );
   }
 
   @override
   String toString() {
-    return 'ClickableElement{id: $id, text: $text, bounds: $bounds}';
+    return 'ClickableElement{id: $id, text: $text}';
   }
 }

@@ -3,6 +3,11 @@ package dev.didur.accessibility_service
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
+import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Build
 import android.os.Handler
@@ -110,15 +115,21 @@ class AccessibilityServiceListener : AccessibilityService() {
             val eventWarper = EventWrapper(packageName, className, mapEventType(eventType), dateTime = now)
 
             executor.execute {
-                val result = analyze(source, eventWarper)
+                if(Settings.recusaAutomatica  || Settings.leituraAcessibilidadeAtivado){
+                    val result = analyze(source, eventWarper)
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    takeScreenshotForOCR(eventWarper)
+                    if(Settings.leituraAcessibilidadeAtivado) {
+                        val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
+                        intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
+                        sendBroadcast(intent)
+                    }
                 }
 
-//                val intent: Intent = Intent(Constants.ACCESSIBILITY_INTENT)
-//                intent.putExtra(Constants.SEND_BROADCAST, Gson().toJson(result.toMap()))
-//                sendBroadcast(intent)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    if(Settings.leituraOcrAtivado) {
+                        takeScreenshotForOCR(eventWarper)
+                    }
+                }
             }
         }
     }
@@ -327,13 +338,62 @@ class AccessibilityServiceListener : AccessibilityService() {
         return (differentPixels.toDouble() / checkedPixels) * 100
     }
 
+    private fun binarizeBitmap(original: Bitmap): Bitmap {
+        // Converte o bitmap para um formato compatível, caso seja um hardware bitmap
+        val compatibleBitmap = original.copy(Bitmap.Config.ARGB_8888, true)
+
+        // Cria um bitmap em escala de cinza
+        val grayscale = Bitmap.createBitmap(compatibleBitmap.width, compatibleBitmap.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(grayscale)
+        val paint = Paint()
+        val colorMatrix = ColorMatrix()
+        colorMatrix.setSaturation(0f)
+        val filter = ColorMatrixColorFilter(colorMatrix)
+        paint.colorFilter = filter
+        canvas.drawBitmap(compatibleBitmap, 0f, 0f, paint)
+
+        // Binariza o bitmap
+        val binarized = Bitmap.createBitmap(grayscale.width, grayscale.height, Bitmap.Config.ARGB_8888)
+        for (x in 0 until grayscale.width) {
+            for (y in 0 until grayscale.height) {
+                val pixel = grayscale.getPixel(x, y)
+                val intensity = Color.red(pixel)
+                if (intensity < 128) {
+                    binarized.setPixel(x, y, Color.BLACK)
+                } else {
+                    binarized.setPixel(x, y, Color.WHITE)
+                }
+            }
+        }
+
+        // Libera o bitmap original e o grayscale para economizar memória
+        compatibleBitmap.recycle()
+        grayscale.recycle()
+
+        return binarized
+    }
 
 
     // Função para executar OCR (substitua com a sua lógica de OCR)
     private fun executeOCR(bitmap: Bitmap, eventWrapper: EventWrapper) {
         Log.d(Constants.LOG_TAG, "Executando OCR na imagem...")
-        // Crie um InputImage a partir do bitmap
-        val image = InputImage.fromBitmap(bitmap, 0)
+
+        lateinit var image: InputImage
+
+        if(Settings.ocrBinarize) {
+            // Binariza o bitmap antes do OCR
+            val binarizedBitmap = binarizeBitmap(bitmap)
+            image = InputImage.fromBitmap(binarizedBitmap, 0)
+        } else if (Settings.ocrUpscale) {
+            val scale = 1.5f // Fator de upscale (ajuste se necessário)
+            val scaledBitmap = Bitmap.createScaledBitmap(bitmap,
+                (bitmap.width * scale).toInt(),
+                (bitmap.height * scale).toInt(),
+                true)
+            image = InputImage.fromBitmap(scaledBitmap, 0)
+        } else {
+            image = InputImage.fromBitmap(bitmap, 0)
+        }
 
         // Obtenha uma instância do TextRecognizer
         val recognizer: TextRecognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
@@ -342,7 +402,11 @@ class AccessibilityServiceListener : AccessibilityService() {
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val text = processTextRecognitionResult(visionText)
-                val clickableElements = getNodesByDate(now!!)
+
+                var clickableElements = mutableListOf<ClickableElement>();
+                if(Settings.recusaAutomatica) {
+                    clickableElements = getNodesByDate(now!!)
+                }
 
                 var imagePath : String? = null
                 Log.d(Constants.LOG_TAG, "Salvar print: ${Settings.tirarPrintSolicitacaoCorrida}")
